@@ -248,3 +248,4 @@ select { font: 16px var(--font); width: 100%; min-height: 48px; padding: 0 12px;
 .add-hint.good { color: #6ee79a; }
 #addDialog { width: min(420px, 92vw); }
 .result .r-seat { font: 26px/1.2 var(--font-h); margin: 10px 0 0; }
+.hall-info .seat-free { display: block; margin: 10px auto 0; min-height: 44px; padding: 0 18px; border-color: #ff8a8a; color: #ff8a8a; }

@@ -451,6 +451,8 @@ function renderHall() {
     let st = 'билет не выпущен';
     if (info) st = info.t.used ? `в зале с ${info.t.usedAt ? fmtTime(info.t.usedAt.toDate()) : '…'} · ${info.t.usedBy}` : `ждём · ${fmtCode(info.code)}`;
     $('hallInfo').textContent = `Ряд ${r} · Место ${s} · ${g?.name ?? ''} — ${st}`;
+    // освободить кресло = сбросить проход билета (вернётся «Ждём», место погаснет у всех)
+    if (info?.t.used) $('hallInfo').append(button('Освободить место', 'ghost seat-free', () => resetOne(info.code)));
   }
 
   // легенда по группам
@@ -469,7 +471,8 @@ function renderHall() {
 }
 
 async function resetOne(code) {
-  if (!confirm(`Сбросить проход билета ${fmtCode(code)}?`)) return;
+  const t = ticketsSnap?.docs?.find((d) => d.id === code)?.data();
+  if (!confirm(`Сбросить проход билета ${fmtCode(code)}${t?.row ? ` (ряд ${t.row}, место ${t.seat})` : ''}?`)) return;
   await updateDoc(doc(db, 'tickets', code), { used: false, usedAt: null, usedBy: null });
   await addDoc(collection(db, 'scans'), { code, result: 'reset', by: me, at: serverTimestamp() });
 }
@@ -477,11 +480,14 @@ $('resetAllBtn').addEventListener('click', async () => {
   if (!confirm('Сбросить ВСЕ проходы? Все билеты снова станут действительными.')) return;
   if (!confirm('Точно? Это нельзя отменить.')) return;
   const snap = await getDocs(query(collection(db, 'tickets'), where('used', '==', true)));
-  // shortcut: один batch держит до 500 записей; если билетов станет больше — резать на пачки
-  const batch = writeBatch(db);
-  snap.forEach((d) => batch.update(d.ref, { used: false, usedAt: null, usedBy: null }));
-  batch.set(doc(collection(db, 'scans')), { code: 'все', result: 'reset', by: me, at: serverTimestamp() });
-  await batch.commit();
+  // batch держит до 500 записей — режем на пачки по 400
+  const docs = snap.docs;
+  for (let i = 0; i < docs.length; i += 400) {
+    const batch = writeBatch(db);
+    docs.slice(i, i + 400).forEach((d) => batch.update(d.ref, { used: false, usedAt: null, usedBy: null }));
+    await batch.commit();
+  }
+  await addDoc(collection(db, 'scans'), { code: 'все', result: 'reset', by: me, at: serverTimestamp() });
 });
 
 /* ---------- Журнал ---------- */

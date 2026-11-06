@@ -1,14 +1,33 @@
-// Отрисовка билета на canvas: эмблема, пламя, перфорация, QR, отрывной корешок
-const W = 640, H = 1000, STUB = 780, NOTCH = 28;
+// Отрисовка билета на canvas в стиле оформления сцены: синий фон с мазками, кистевой леттеринг, QR, корешок
+import { HALL, HALL_COLS } from './hall.js';
 
-// Детерминированный ГСЧ: у каждого билета свой рисунок искр
-function rng(seed) {
-  return () => {
-    seed = (seed + 0x6d2b79f5) | 0;
-    let t = Math.imul(seed ^ (seed >>> 15), 1 | seed);
-    t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t;
-    return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
-  };
+const W = 640, NOTCH = 28;
+let H = 1120, STUB = 870; // у билетов с местом высота больше — задаётся в drawTicket
+
+export const EVENT_DATE = '26 НОЯБРЯ 2026 · 19:00';
+export const EVENT_PLACE = 'Москва · Концертный зал «Моспродюсер»';
+
+const NAVY = '#16224a', NAVY_DEEP = '#0f1834', ORANGE = '#e8603c', SKY = '#5fb4e6', ICE = '#a9cdee';
+
+// Группы гостей по схеме зала: color — заливка из xlsx, a1 — акцент билета
+export const GROUPS = {
+  jury:    { name: 'Члены жюри',            label: 'ЧЛЕНЫ ЖЮРИ',            sector: 'ФИОЛЕТОВЫЙ', color: '#800080', a1: '#b44dff' },
+  honor:   { name: 'Почётные гости',        label: 'ПОЧЁТНЫЕ ГОСТИ',        sector: 'ОРАНЖЕВЫЙ', color: '#ff8000', a1: '#ff8000' },
+  spca:    { name: 'СПЦА МЧС России',       label: 'СПЦА МЧС РОССИИ',       sector: 'ЗЕЛЁНЫЙ', color: '#70ad47', a1: '#62c23a' },
+  terr:    { name: 'Территориальные органы МЧС России', label: 'ТЕРРИТОРИАЛЬНЫЕ ОРГАНЫ МЧС', sector: 'КРАСНЫЙ', color: '#ff0000', a1: '#ff2b2b' },
+  support: { name: 'Группы поддержки',      label: 'ГРУППА ПОДДЕРЖКИ',      sector: 'СЕРЫЙ', color: '#b2b2b2', a1: '#c4c4c4' },
+  reserve: { name: 'Резерв',                label: 'РЕЗЕРВ',                sector: 'РЕЗЕРВ', color: '#5fb4e6', a1: '#5fb4e6' },
+  aisle:   { name: 'Сектор Проход',         label: 'СЕКТОР ПРОХОД',         sector: 'ЖЁЛТЫЙ', color: '#ffff00', a1: '#ffe600' },
+};
+
+const img = {};
+function load(src) {
+  return (img[src] ??= new Promise((ok, fail) => {
+    const i = new Image();
+    i.onload = () => ok(i);
+    i.onerror = fail;
+    i.src = new URL(src, import.meta.url).href;
+  }));
 }
 
 // iOS < 16 не знает roundRect
@@ -36,161 +55,203 @@ function ticketPath(c) {
   c.closePath();
 }
 
-function flame(c, x, base, w, h) {
-  c.beginPath();
-  c.moveTo(x - w / 2, base);
-  c.bezierCurveTo(x - w / 2, base - h * 0.45, x - w * 0.12, base - h * 0.62, x, base - h);
-  c.bezierCurveTo(x + w * 0.1, base - h * 0.58, x + w / 2, base - h * 0.5, x + w / 2, base);
-  c.closePath();
-  c.fill();
+function spaced(c, text, x, y, font, color, gap, max) {
+  c.font = font;
+  c.fillStyle = color;
+  c.letterSpacing = gap + 'px';
+  c.fillText(text, x, y, max);
+  c.letterSpacing = '0px';
 }
 
-function arcText(c, text, cx, cy, r) {
-  const chars = [...text], step = (Math.PI * 2) / chars.length;
-  chars.forEach((ch, i) => {
-    c.save();
-    c.translate(cx, cy);
-    c.rotate(i * step);
-    c.fillText(ch, 0, -r);
-    c.restore();
-  });
+function chip(c, x, y, w, h, accent, label, value, size = 40, dot) {
+  c.fillStyle = '#0f183499';
+  rr(c, x, y, w, h, 16); c.fill();
+  c.lineWidth = 2; c.strokeStyle = accent;
+  rr(c, x, y, w, h, 16); c.stroke();
+  c.textAlign = 'center';
+  spaced(c, label, x + w / 2, y + 26, '600 14px Montserrat, sans-serif', ICE, 4);
+  c.fillStyle = '#fff';
+  c.font = `italic 800 ${size}px Montserrat, sans-serif`;
+  if (dot) {
+    const tw = Math.min(w - 44, c.measureText(value).width);
+    c.fillText(value, x + w / 2 + 11, y + h - 16, w - 44);
+    c.fillStyle = dot;
+    c.beginPath(); c.arc(x + w / 2 - tw / 2 - 6, y + h - 16 - size * 0.34, 8, 0, Math.PI * 2); c.fill();
+  } else c.fillText(value, x + w / 2, y + h - 14, w - 20);
 }
 
-function emblem(c, cx, cy, P) {
-  c.save();
-  c.shadowColor = P.a1;
-  c.shadowBlur = 40;
-  c.fillStyle = '#1a0904';
-  c.beginPath(); c.arc(cx, cy, 92, 0, Math.PI * 2); c.fill();
-  c.restore();
-  c.lineWidth = 4; c.strokeStyle = P.a1;
-  c.beginPath(); c.arc(cx, cy, 92, 0, Math.PI * 2); c.stroke();
-  c.lineWidth = 1.5; c.strokeStyle = P.a2;
-  c.beginPath(); c.arc(cx, cy, 62, 0, Math.PI * 2); c.stroke();
-  // надпись по кругу
-  c.fillStyle = P.a2;
-  c.font = '17px "Russo One", sans-serif';
-  c.textAlign = 'center'; c.textBaseline = 'middle';
-  arcText(c, 'КВН · РЕШАЮЩЕЕ НАПРАВЛЕНИЕ · ', cx, cy, 77);
-  // пламя в центре
-  const g = c.createLinearGradient(0, cy + 40, 0, cy - 50);
-  g.addColorStop(0, P.a1); g.addColorStop(1, P.a3);
-  c.fillStyle = g;
-  flame(c, cx, cy + 38, 64, 92);
-  c.fillStyle = '#fff3c4';
-  flame(c, cx + 2, cy + 38, 28, 42);
+// Мини-схема зала: ряд 15 сверху, сцена снизу (как в xlsx); своё место — белое с кольцом
+function hallMap(c, top, P) {
+  const x0 = 54, w = W - 108, cell = w / HALL_COLS, rh = 13, ph = 15 * rh + 70;
+  c.fillStyle = '#0f1834b3';
+  rr(c, x0 - 14, top, w + 28, ph, 18); c.fill();
+  c.lineWidth = 1.5; c.strokeStyle = ICE + '40';
+  rr(c, x0 - 14, top, w + 28, ph, 18); c.stroke();
+  const rowY = (r) => top + 18 + (15 - r) * rh;
+  if (P.row) { // подсветка своего ряда
+    c.fillStyle = P.accent + '30';
+    rr(c, x0 - 6, rowY(P.row) - rh / 2, w + 12, rh, 6); c.fill();
+  }
+  if (P.group === 'aisle') { // боковые проходы рядов 1–9
+    c.fillStyle = P.accent;
+    for (const x of [x0 - 8, x0 + w + 2]) { rr(c, x, rowY(9) - 5, 6, rowY(1) - rowY(9) + 10, 3); c.fill(); }
+  }
+  for (const [r, list] of Object.entries(HALL)) for (const [col, seat, g] of list) {
+    const cx = x0 + (col + 0.5) * cell, cy = rowY(+r);
+    const mine = +r === P.row && seat === P.seat;
+    c.globalAlpha = mine ? 1 : g === P.group ? 0.95 : 0.3;
+    c.fillStyle = g === 'tech' ? '#5a6b8f' : GROUPS[g].a1;
+    c.beginPath(); c.arc(cx, cy, mine ? 5.5 : 4.2, 0, Math.PI * 2); c.fill();
+  }
+  c.globalAlpha = 1;
+  if (P.row) {
+    const it = HALL[P.row].find((s) => s[1] === P.seat);
+    if (it) {
+      const cx = x0 + (it[0] + 0.5) * cell, cy = rowY(P.row);
+      c.shadowColor = '#fff'; c.shadowBlur = 12;
+      c.fillStyle = '#fff';
+      c.beginPath(); c.arc(cx, cy, 6, 0, Math.PI * 2); c.fill();
+      c.shadowBlur = 0;
+      c.lineWidth = 2.5; c.strokeStyle = P.accent;
+      c.beginPath(); c.arc(cx, cy, 10, 0, Math.PI * 2); c.stroke();
+    }
+  }
+  // сцена
+  const sy = rowY(1) + 18;
+  const sg = c.createLinearGradient(x0, 0, x0 + w, 0);
+  sg.addColorStop(0, SKY); sg.addColorStop(1, ORANGE);
+  c.fillStyle = sg;
+  rr(c, x0 + w * 0.12, sy, w * 0.76, 24, 12); c.fill();
+  c.textAlign = 'center';
+  spaced(c, 'СЦЕНА', W / 2, sy + 17, '700 13px Montserrat, sans-serif', '#fff', 6);
+  return top + ph;
 }
 
-export async function drawTicket(cv, { code, vip, title, pretty }) {
-  cv.width = W; cv.height = H;
+export async function drawTicket(cv, { code, vip, pretty, group, row, seat }) {
   const c = cv.getContext('2d');
   await Promise.all([
-    document.fonts.load('46px "Russo One"'),
-    document.fonts.load('700 20px Inter'),
+    document.fonts.load('italic 800 40px Montserrat'),
+    document.fonts.load('500 18px Montserrat'),
+    document.fonts.load('600 14px Montserrat'),
   ]).catch(() => {});
-  const P = vip
-    ? { a1: '#ffb21a', a2: '#ffd166', a3: '#fff3c4', deep: '#3d2300', label: 'VIP · ПРОХОД ВСЕГДА' }
-    : { a1: '#ff5a1f', a2: '#ffb21a', a3: '#ffe29a', deep: '#3d0d04', label: 'ВХОДНОЙ БИЛЕТ' };
-  const rand = rng(Number(code.slice(0, 9)));
+  const [bgImg, titleImg] = await Promise.all([load('./assets/bg.jpg'), load('./assets/title.png')]);
+  const G = GROUPS[group];
+  const accent = vip ? '#ffb21a' : G?.a1 ?? ORANGE;
+  const label = vip ? 'VIP · ПРОХОД ВСЕГДА' : G?.label ?? 'ВХОДНОЙ БИЛЕТ';
+  const seated = row != null && seat != null;
+  const compact = seated || group === 'aisle';
+  H = compact ? 1450 : 1120;
+  STUB = compact ? 1200 : 870;
+  cv.width = W; cv.height = H;
 
   c.clearRect(0, 0, W, H);
   c.save();
   ticketPath(c);
   c.clip();
 
-  // фон
-  const bg = c.createLinearGradient(0, 0, 0, H);
-  bg.addColorStop(0, '#170804'); bg.addColorStop(0.7, P.deep); bg.addColorStop(1, '#120603');
-  c.fillStyle = bg; c.fillRect(0, 0, W, H);
-  const glow = c.createRadialGradient(W / 2, 150, 10, W / 2, 150, 340);
-  glow.addColorStop(0, P.a1 + '55'); glow.addColorStop(1, 'transparent');
-  c.fillStyle = glow; c.fillRect(0, 0, W, H);
+  // фон: мазки с пола сцены + затемнение по центру, чтобы читался текст
+  c.fillStyle = NAVY; c.fillRect(0, 0, W, H);
+  const bs = Math.max(1160, H + 80);
+  c.drawImage(bgImg, (W - bs) / 2 - 20, -40, bs, bs);
+  const v = c.createRadialGradient(W / 2, 470, 60, W / 2, 470, 420);
+  v.addColorStop(0, NAVY + 'f2'); v.addColorStop(0.65, NAVY + 'b0'); v.addColorStop(1, NAVY + '00');
+  c.fillStyle = v; c.fillRect(0, 0, W, H);
 
-  // пожарная «зебра» сверху
-  c.fillStyle = P.a1;
-  for (let x = -40; x < W + 40; x += 36) {
-    c.beginPath(); c.moveTo(x, 0); c.lineTo(x + 18, 0); c.lineTo(x + 6, 14); c.lineTo(x - 12, 14); c.fill();
-  }
+  // леттеринг «Решающее направление» из макета
+  const tw = compact ? 440 : 520, th = tw * titleImg.height / titleImg.width;
+  const ty = compact ? 34 : 44;
+  c.drawImage(titleImg, (W - tw) / 2, ty, tw, th);
+  let y = ty + th + 34;
 
-  // пламя у перфорации
-  for (let layer = 0; layer < 3; layer++) {
-    const g = c.createLinearGradient(0, STUB, 0, STUB - 200);
-    g.addColorStop(0, layer === 2 ? P.a3 + 'cc' : P.a1 + (layer ? 'aa' : '66'));
-    g.addColorStop(1, 'transparent');
-    c.fillStyle = g;
-    for (let x = -20; x < W + 40; x += 44 + layer * 10) {
-      flame(c, x + layer * 15 + rand() * 12, STUB + 6, 60 - layer * 10, 90 + rand() * (130 - layer * 30));
-    }
-  }
-
-  // искры
-  c.shadowColor = P.a1; c.shadowBlur = 8;
-  for (let i = 0; i < 38; i++) {
-    const x = rand() * W, y = 40 + rand() * (STUB - 60), r = 0.8 + rand() * 2.4;
-    c.fillStyle = rand() > 0.5 ? P.a2 : P.a3;
-    c.globalAlpha = 0.25 + rand() * 0.6;
-    c.beginPath(); c.arc(x, y, r, 0, Math.PI * 2); c.fill();
-  }
-  c.globalAlpha = 1; c.shadowBlur = 0;
-
-  emblem(c, W / 2, 140, P);
-
-  // название
+  // — КВН МЧС РОССИИ —
   c.textAlign = 'center'; c.textBaseline = 'alphabetic';
-  const tg = c.createLinearGradient(0, 262, 0, 300);
-  tg.addColorStop(0, P.a3); tg.addColorStop(1, P.a1);
-  c.fillStyle = tg;
-  c.font = '46px "Russo One", sans-serif';
-  c.fillText(title, W / 2, 300, W - 60);
-  c.fillStyle = '#fff4ea';
-  c.font = '700 18px Inter, sans-serif';
-  c.letterSpacing = '4px';
-  c.fillText(P.label, W / 2, 336);
-  c.letterSpacing = '0px';
+  spaced(c, 'КВН МЧС РОССИИ', W / 2, y, '500 18px Montserrat, sans-serif', '#fff', 6);
+  c.fillStyle = ORANGE;
+  c.fillRect(W / 2 - 205, y - 7, 34, 3);
+  c.fillRect(W / 2 + 171, y - 7, 34, 3);
 
-  // QR на белой плашке с огненной рамкой
+  y += 40;
+  spaced(c, EVENT_DATE, W / 2, y, '500 26px Montserrat, sans-serif', ORANGE, 3);
+  y += 28;
+  c.font = '500 16px Montserrat, sans-serif';
+  c.fillStyle = ICE;
+  c.fillText(EVENT_PLACE, W / 2, y, W - 60);
+
+  // плашка категории
+  y += 18;
+  c.font = '700 15px Montserrat, sans-serif';
+  c.letterSpacing = '4px';
+  const lw = Math.min(W - 60, c.measureText(label).width + 40);
+  c.fillStyle = accent;
+  rr(c, (W - lw) / 2, y, lw, 34, 17); c.fill();
+  c.fillStyle = vip || group === 'aisle' || group === 'support' ? NAVY_DEEP : '#fff';
+  c.fillText(label, W / 2, y + 23, lw - 28);
+  c.letterSpacing = '0px';
+  y += 60;
+
+  if (seated) {
+    chip(c, 40, y, 230, 80, accent, 'СЕКТОР', G?.sector ?? '—', 28, accent);
+    chip(c, 286, y, 150, 80, accent, 'РЯД', String(row));
+    chip(c, 452, y, 148, 80, accent, 'МЕСТО', String(seat));
+    y += 100;
+  } else if (group === 'aisle') {
+    chip(c, 40, y, 230, 80, accent, 'СЕКТОР', G.sector, 28, accent);
+    chip(c, 286, y, 314, 80, accent, 'МЕСТО', 'ПРОХОД', 34);
+    y += 100;
+  }
+  if (compact) y = hallMap(c, y, { row, seat, group, accent }) + 28;
+
+  // QR на белой плашке с сине-оранжевой рамкой
   const qr = qrcode(0, 'M');
   qr.addData(code);
   qr.make();
-  const n = qr.getModuleCount(), box = 360, x0 = (W - box) / 2, y0 = 370;
-  const fg = c.createLinearGradient(x0, y0, x0 + box, y0 + box);
-  fg.addColorStop(0, P.a3); fg.addColorStop(0.5, P.a1); fg.addColorStop(1, P.a2);
+  const n = qr.getModuleCount();
+  const box = Math.min(compact ? 280 : 300, STUB - 36 - y), x0 = (W - box) / 2, y0 = y;
+  const fg = c.createLinearGradient(x0, y0 + box, x0 + box, y0);
+  fg.addColorStop(0, SKY); fg.addColorStop(0.55, '#3d7cc0'); fg.addColorStop(1, accent);
   c.fillStyle = fg;
-  rr(c, x0 - 8, y0 - 8, box + 16, box + 16, 30); c.fill();
+  rr(c, x0 - 8, y0 - 8, box + 16, box + 16, 28); c.fill();
   c.fillStyle = '#fff';
-  rr(c, x0, y0, box, box, 24); c.fill();
-  const pad = 24, cell = (box - pad * 2) / n;
-  c.fillStyle = '#140906';
+  rr(c, x0, y0, box, box, 22); c.fill();
+  const pad = 20, cell = (box - pad * 2) / n;
+  c.fillStyle = NAVY_DEEP;
   for (let r = 0; r < n; r++) for (let k = 0; k < n; k++) {
     if (qr.isDark(r, k)) c.fillRect(x0 + pad + k * cell, y0 + pad + r * cell, Math.ceil(cell), Math.ceil(cell));
   }
+
+  // корешок
+  const sg = c.createLinearGradient(0, STUB, 0, H);
+  sg.addColorStop(0, NAVY_DEEP + 'ee'); sg.addColorStop(1, NAVY_DEEP);
+  c.fillStyle = sg; c.fillRect(0, STUB, W, H - STUB);
   c.restore();
 
   // перфорация
-  c.strokeStyle = '#ffffff55';
+  c.strokeStyle = ICE + '88';
   c.lineWidth = 3;
   c.setLineDash([2, 12]);
   c.lineCap = 'round';
   c.beginPath(); c.moveTo(NOTCH + 14, STUB); c.lineTo(W - NOTCH - 14, STUB); c.stroke();
   c.setLineDash([]);
 
-  // корешок
   c.textAlign = 'center';
-  c.fillStyle = '#d6b7a3';
-  c.font = '700 15px Inter, sans-serif';
-  c.letterSpacing = '3px';
-  c.fillText('№ БИЛЕТА', W / 2, STUB + 58);
-  c.letterSpacing = '0px';
-  c.fillStyle = '#fff4ea';
-  c.font = '500 46px ui-monospace, Menlo, monospace';
-  c.fillText(pretty, W / 2, STUB + 112);
-  c.fillStyle = P.a2;
-  c.font = '18px Inter, sans-serif';
-  c.fillText(vip ? 'Общий VIP-код · не передавай посторонним' : 'Покажи QR на входе · билет на одного', W / 2, STUB + 156);
+  spaced(c, '№ БИЛЕТА', W / 2, STUB + 50, '600 14px Montserrat, sans-serif', ICE, 4);
+  c.fillStyle = '#fff';
+  c.font = '700 44px Montserrat, sans-serif';
+  c.fillText(pretty, W / 2, STUB + 102);
+  c.fillStyle = accent;
+  c.font = '500 17px Montserrat, sans-serif';
+  c.fillText(vip ? 'Общий VIP-код · не передавай посторонним' : 'Покажи QR на входе · билет на одного', W / 2, STUB + 140);
+  const tail = seated ? `${G?.sector ?? ''} · РЯД ${row} · МЕСТО ${seat}` : group === 'aisle' ? 'ЖЁЛТЫЙ · СЕКТОР ПРОХОД' : G ? `${G.label} · БЕЗ МЕСТА` : EVENT_DATE;
+  c.fillStyle = '#fff';
+  c.font = 'italic 800 24px Montserrat, sans-serif';
+  c.fillText(tail, W / 2, STUB + 190, W - 60);
+  c.fillStyle = ICE;
+  c.font = '500 14px Montserrat, sans-serif';
+  c.fillText(compact ? EVENT_DATE : EVENT_PLACE, W / 2, STUB + 218);
 
-  // контур билета
+  // контур
   ticketPath(c);
   c.lineWidth = 3;
-  c.strokeStyle = P.a1 + 'aa';
+  c.strokeStyle = SKY + '99';
   c.stroke();
 }

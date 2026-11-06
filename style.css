@@ -205,3 +205,46 @@ label { font-size: 14px; color: var(--muted); display: block; margin: 12px 0 6px
 dialog { background: var(--surface); color: var(--text); border: 1px solid var(--line); border-radius: 20px; padding: 16px; max-width: min(420px, 92vw); }
 dialog::backdrop { background: rgba(0, 0, 0, .7); }
 #qrCanvas { width: auto; max-width: 100%; max-height: 66dvh; display: block; margin: 0 auto 12px; filter: drop-shadow(0 10px 30px rgba(255, 90, 31, .35)); }
+
+/* Рассадка: живая схема зала */
+.hall-head { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; margin-bottom: 12px; }
+.hall-head > div { background: var(--surface); border: 1px solid var(--line); border-radius: var(--r); padding: 12px; }
+.hall-head b { font: 26px/1.1 var(--font-h); display: block; }
+.hall-head #hallPct { background: linear-gradient(180deg, var(--fire-2), var(--fire)); -webkit-background-clip: text; background-clip: text; color: transparent; }
+.hall-head .of { color: var(--muted); font-size: 18px; }
+.hall-head small { color: var(--muted); font-size: 12px; }
+.hall-card { background: radial-gradient(120% 90% at 50% 100%, #1d2f5e, #101a38); border: 1px solid #2b3e72; border-radius: 18px; padding: 12px 8px 10px; }
+.hall { width: 100%; height: auto; display: block; touch-action: manipulation; }
+.hall .rn { font: 600 9px var(--font); fill: #7f93c4; text-anchor: middle; dominant-baseline: central; }
+.hall .stage-t { font: 700 11px var(--font); fill: #fff; letter-spacing: 6px; text-anchor: middle; dominant-baseline: central; }
+.hall .seat { fill: var(--c); fill-opacity: .1; stroke: var(--c); stroke-opacity: .25; stroke-width: 1; cursor: pointer; transition: fill-opacity .3s, stroke-opacity .3s; }
+.hall .seat.issued { fill-opacity: .18; stroke-opacity: .85; stroke-width: 1.4; }
+.hall .seat.in { fill-opacity: 1; stroke: #fff; stroke-opacity: .9; stroke-width: 1.2; filter: drop-shadow(0 0 3px var(--c)); }
+.hall .seat.tech { fill: #5a6b8f; fill-opacity: .55; stroke: none; cursor: default; }
+.hall .seat.sel { stroke: #fff; stroke-opacity: 1; stroke-width: 2.4; }
+.hall .aisle { fill: #ffe600; fill-opacity: .25; }
+.hall .aisle-t { font: 700 9px var(--font); fill: #ffe600; text-anchor: middle; }
+@media (prefers-reduced-motion: no-preference) {
+  .hall .seat.pop { animation: seatpop .9s cubic-bezier(.2, 1.5, .4, 1); transform-box: fill-box; transform-origin: center; }
+  @keyframes seatpop { 0% { transform: scale(.2); } 45% { transform: scale(2.2); } 100% { transform: scale(1); } }
+}
+.hall-info { margin: 8px 6px 0; font-size: 14px; color: #c9d6f2; text-align: center; min-height: 1.5em; }
+.hall-legend { list-style: none; margin: 12px 0 0; padding: 0; display: grid; gap: 8px; }
+.hall-legend li { display: grid; grid-template-columns: 14px 1fr auto; align-items: center; gap: 4px 10px; padding: 10px 12px; background: var(--surface); border: 1px solid var(--line); border-radius: 12px; font-size: 14px; }
+.hall-legend .dot { width: 14px; height: 14px; border-radius: 50%; background: var(--c); }
+.hall-legend b { font: 16px var(--font-h); }
+.hall-legend .bar { grid-column: 2 / 4; height: 6px; border-radius: 3px; background: var(--surface-2); overflow: hidden; }
+.hall-legend .bar i { display: block; height: 100%; width: calc(var(--fill) * 1%); background: var(--c); transition: width .6s; }
+.hall-legend .ns { color: var(--muted); font-size: 12px; }
+
+/* Выпуск билета */
+.dlg-title { font: 22px var(--font-h); margin: 0 0 4px; }
+select { font: 16px var(--font); width: 100%; min-height: 48px; padding: 0 12px; border-radius: 12px; background: var(--bg); color: var(--text); border: 1px solid var(--line); }
+.check { display: flex; align-items: center; gap: 10px; color: var(--text); font-size: 16px; min-height: 44px; margin: 8px 0 0; }
+.check input { width: 22px; height: 22px; min-height: 0; accent-color: var(--fire); }
+.seat-row { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
+.add-hint { min-height: 1.5em; margin: 10px 0 12px; }
+.add-hint.bad { color: #ff8a8a; }
+.add-hint.good { color: #6ee79a; }
+#addDialog { width: min(420px, 92vw); }
+.result .r-seat { font: 26px/1.2 var(--font-h); margin: 10px 0 0; }

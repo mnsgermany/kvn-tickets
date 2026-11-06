@@ -12,11 +12,23 @@ service cloud.firestore {
       allow create: if admin()
         && code.matches('[0-9]{12}')
         && request.resource.data.used == false
-        && request.resource.data.vip is bool;
+        && request.resource.data.vip is bool
+        && request.resource.data.keys().hasOnly(['vip', 'used', 'createdAt', 'createdBy', 'group', 'row', 'seat'])
+        && (!('group' in request.resource.data)
+            || request.resource.data.group in ['jury', 'honor', 'spca', 'terr', 'support', 'aisle', 'reserve'])
+        && (!('row' in request.resource.data)
+            || (request.resource.data.row is int && request.resource.data.seat is int));
       // Менять можно только отметку прохода (скан и сброс)
       allow update: if admin()
         && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['used', 'usedAt', 'usedBy']);
       allow delete: if false;
+    }
+
+    // Бронь кресла «ряд-место»: создаётся вместе с билетом, не меняется — одно место, один билет
+    match /seats/{id} {
+      allow read: if admin();
+      allow create: if admin() && id.matches('[0-9]{1,2}-[0-9]{1,2}');
+      allow update, delete: if false;
     }
 
     // Журнал: только дописывать

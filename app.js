@@ -6,7 +6,8 @@ import {
 } from 'https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore.js';
 import { firebaseConfig, EVENT_TITLE, LOGIN_DOMAIN } from './config.js';
 import { newCode, decide, cleanCode, fmtCode } from './logic.js';
-import { drawTicket } from './ticket.js';
+import { drawTicket, GROUPS } from './ticket.js';
+import { HALL, groupOf } from './hall.js';
 
 const $ = (id) => document.getElementById(id);
 $('eventTitle').textContent = EVENT_TITLE;
@@ -139,6 +140,7 @@ function showResult({ result, code, ticket }) {
   $('rIcon').setAttribute('href', `#${r.icon}`);
   $('rTitle').textContent = r.title;
   $('rCode').textContent = /^\d{12}$/.test(code) ? fmtCode(code) : '';
+  $('rSeat').textContent = result === 'ok' || result === 'used' ? seatText(ticket) : '';
   let info = '';
   if (result === 'used' && ticket?.usedAt) info = `${fmtTime(ticket.usedAt.toDate())} · ${ticket.usedBy}`;
   if (result === 'offline') info = 'Проверь интернет и отсканируй ещё раз';
@@ -236,8 +238,16 @@ document.addEventListener('visibilitychange', async () => {
 });
 
 /* ---------- Билеты ---------- */
-let hasVip = false;
+let hasVip = false, ticketsSnap = null;
+const seatKey = (r, s) => `${r}-${s}`;
+function seatText(t) {
+  if (!t || t.vip) return '';
+  const g = GROUPS[t.group];
+  if (t.row) return `${g ? g.sector + ' · ' : ''}Ряд ${t.row} · Место ${t.seat}`;
+  return g ? `${g.name} · без места` : '';
+}
 function renderTickets(snap) {
+  ticketsSnap = snap;
   const list = $('ticketList');
   list.replaceChildren();
   let total = 0, used = 0;
@@ -252,12 +262,13 @@ function renderTickets(snap) {
     code.textContent = fmtCode(d.id);
     const meta = document.createElement('span');
     meta.className = 'meta';
-    meta.textContent = t.used && !t.vip ? `прошёл ${t.usedAt ? fmtTime(t.usedAt.toDate()) : ''} · ${t.usedBy}` : '';
+    meta.textContent = [seatText(t), t.used && !t.vip ? `прошёл ${t.usedAt ? fmtTime(t.usedAt.toDate()) : ''} · ${t.usedBy}` : '']
+      .filter(Boolean).join(' · ');
     code.append(meta);
     const pill = document.createElement('span');
     pill.className = `pill ${t.vip ? 'vip' : t.used ? 'used' : 'ok'}`;
     pill.textContent = t.vip ? 'VIP' : t.used ? 'Прошёл' : 'Ждём';
-    const qrBtn = button('QR', 'secondary', () => openQr(d.id, t.vip));
+    const qrBtn = button('QR', 'secondary', () => openQr(d.id, t));
     li.append(code, pill, qrBtn);
     if (t.used && !t.vip) li.append(button('Сброс', 'ghost', () => resetOne(d.id)));
     list.append(li);
@@ -270,6 +281,7 @@ function renderTickets(snap) {
   $('stLeft').textContent = total - used;
   $('stPct').textContent = `${pct}%`;
   $('stRing').style.setProperty('--p', pct);
+  renderHall();
 }
 function button(text, cls, onClick) {
   const b = document.createElement('button');
@@ -279,24 +291,182 @@ function button(text, cls, onClick) {
   return b;
 }
 
-async function addTicket(vip) {
+async function addTicket({ vip = false, group = '', row = null, seat = null } = {}) {
+  const data = { vip, used: false, createdAt: serverTimestamp(), createdBy: me };
+  if (group) data.group = group;
+  if (row) Object.assign(data, { row, seat });
   try {
     const code = await runTransaction(db, async (tx) => {
+      // Место бронируем документом seats/ряд-место в той же транзакции: два админа не выдадут одно кресло
+      const seatRef = row ? doc(db, 'seats', seatKey(row, seat)) : null;
+      if (seatRef && (await tx.get(seatRef)).exists()) throw new Error('seat-taken');
       for (;;) {
         const c = newCode(), ref = doc(db, 'tickets', c);
         if ((await tx.get(ref)).exists()) continue; // совпадение — шанс 1 к триллиону, но проверяем
-        tx.set(ref, { vip, used: false, createdAt: serverTimestamp(), createdBy: me });
+        tx.set(ref, data);
+        if (seatRef) tx.set(seatRef, { code: c, by: me, at: serverTimestamp() });
         return c;
       }
     });
-    openQr(code, vip);
+    openQr(code, data);
   } catch (err) {
     console.error(err);
-    alert('Не получилось выпустить билет. Проверь интернет.');
+    alert(err.message === 'seat-taken' ? 'Это место уже занято другим билетом.' : 'Не получилось выпустить билет. Проверь интернет.');
   }
 }
-$('addBtn').addEventListener('click', () => addTicket(false));
-$('vipBtn').addEventListener('click', () => confirm('Создать общий VIP-код? Он пропускает всегда.') && addTicket(true));
+$('vipBtn').addEventListener('click', () => confirm('Создать общий VIP-код? Он пропускает всегда.') && addTicket({ vip: true }));
+
+/* ---------- Окно выпуска: группа, ряд/место или «без места» ---------- */
+const NO_SEAT_GROUPS = ['aisle', 'reserve'];
+$('addGroup').innerHTML = '<option value="">Без группы</option>' +
+  Object.entries(GROUPS).map(([k, g]) => `<option value="${k}">${g.name}${NO_SEAT_GROUPS.includes(k) ? ' (без мест)' : ''}</option>`).join('');
+
+function seatTaken(row, seat) {
+  let code = null;
+  ticketsSnap?.forEach((d) => { const t = d.data(); if (t.row === row && t.seat === seat) code = d.id; });
+  return code;
+}
+// Проверка формы: { ok, msg, kind }
+function checkAdd() {
+  const group = $('addGroup').value;
+  const forced = NO_SEAT_GROUPS.includes(group);
+  $('addNoSeat').disabled = forced;
+  if (forced) $('addNoSeat').checked = true;
+  const noSeat = $('addNoSeat').checked;
+  $('seatFields').hidden = noSeat;
+  if (noSeat) return { ok: true, msg: group ? `${GROUPS[group].name} · без места` : 'Билет без места', kind: 'good' };
+  const row = +$('addRow').value, seat = +$('addSeat').value;
+  if (!row || !seat) return { ok: false, msg: 'Укажи ряд и место или отметь «Без места»', kind: '' };
+  const hallGroup = groupOf(row, seat);
+  if (!hallGroup) return { ok: false, msg: `Места ${seat} в ${row}-м ряду нет в зале`, kind: 'bad' };
+  if (hallGroup === 'tech') return { ok: false, msg: 'Это техническая зона, билет на неё не выдаём', kind: 'bad' };
+  const taken = seatTaken(row, seat);
+  if (taken) return { ok: false, msg: `Занято: билет ${fmtCode(taken)}`, kind: 'bad' };
+  if (group && hallGroup !== group) return { ok: true, msg: `Свободно, но по схеме это сектор «${GROUPS[hallGroup].name}»`, kind: 'bad' };
+  return { ok: true, msg: `Свободно · ${GROUPS[hallGroup].sector} сектор`, kind: 'good' };
+}
+function refreshAdd() {
+  const r = checkAdd();
+  $('addHint').textContent = r.msg;
+  $('addHint').className = `hint add-hint ${r.kind}`;
+  $('addOk').disabled = !r.ok;
+}
+// Если группа не выбрана — подставляем её по схеме, как только введено место
+function autoGroup() {
+  const g = groupOf(+$('addRow').value, +$('addSeat').value);
+  if (!$('addGroup').value && g && g !== 'tech') $('addGroup').value = g;
+  refreshAdd();
+}
+['addGroup', 'addNoSeat'].forEach((id) => $(id).addEventListener('change', refreshAdd));
+['addRow', 'addSeat'].forEach((id) => $(id).addEventListener('input', autoGroup));
+$('addBtn').addEventListener('click', () => {
+  $('addForm').reset();
+  refreshAdd();
+  $('addDialog').showModal();
+});
+$('addCancel').addEventListener('click', () => $('addDialog').close());
+$('addForm').addEventListener('submit', (e) => {
+  e.preventDefault();
+  if (!checkAdd().ok) return refreshAdd();
+  const group = $('addGroup').value, noSeat = $('addNoSeat').checked;
+  $('addDialog').close();
+  addTicket({ group, row: noSeat ? null : +$('addRow').value, seat: noSeat ? null : +$('addSeat').value });
+});
+
+/* ---------- Рассадка: схема зала, заполняется по сканам ---------- */
+const SVGNS = 'http://www.w3.org/2000/svg';
+const HX = (col) => 40 + (col + 1) * 20 + 10;         // col -1 и 31 — боковые проходы
+const HY = (row) => 16 + (15 - row) * 22;             // ряд 15 сверху, сцена снизу — как в схеме
+const SEATS_TOTAL = Object.values(HALL).flat().filter((s) => s[2] !== 'tech').length;
+let hallBuilt = false, prevIn = null, selSeat = null;
+function el(tag, attrs, parent) {
+  const e = document.createElementNS(SVGNS, tag);
+  for (const [k, v] of Object.entries(attrs)) e.setAttribute(k, v);
+  parent.append(e);
+  return e;
+}
+function buildHall() {
+  const svg = $('hallSvg');
+  const h = HY(1) + 64;
+  svg.setAttribute('viewBox', `0 0 740 ${h}`);
+  for (const x of [HX(-1), HX(31)]) {
+    el('rect', { class: 'aisle', x: x - 7, y: HY(9) - 8, width: 14, height: HY(1) - HY(9) + 16, rx: 7 }, svg);
+  }
+  for (let r = 1; r <= 15; r++) {
+    for (const x of [18, 722]) el('text', { class: 'rn', x, y: HY(r) }, svg).textContent = r;
+    for (const [col, seat, g] of HALL[r] ?? []) {
+      const c = el('circle', { class: `seat${g === 'tech' ? ' tech' : ''}`, cx: HX(col), cy: HY(r), r: 7.5, 'data-k': seatKey(r, seat) }, svg);
+      if (g !== 'tech') c.style.setProperty('--c', GROUPS[g].a1);
+    }
+  }
+  const defs = el('defs', {}, svg);
+  const lg = el('linearGradient', { id: 'stageG' }, defs);
+  el('stop', { offset: 0, 'stop-color': '#5fb4e6' }, lg);
+  el('stop', { offset: 1, 'stop-color': '#e8603c' }, lg);
+  const sy = HY(1) + 26;
+  el('rect', { x: 130, y: sy, width: 480, height: 28, rx: 14, fill: 'url(#stageG)' }, svg);
+  el('text', { class: 'stage-t', x: 370, y: sy + 14 }, svg).textContent = 'СЦЕНА';
+  svg.addEventListener('click', (e) => {
+    const k = e.target.dataset?.k;
+    if (!k || e.target.classList.contains('tech')) return;
+    selSeat = k;
+    renderHall();
+  });
+  hallBuilt = true;
+}
+function renderHall() {
+  if (!ticketsSnap) return;
+  if (!hallBuilt) buildHall();
+  const bySeat = new Map(), stat = {};
+  ticketsSnap.forEach((d) => {
+    const t = d.data();
+    if (t.vip) return;
+    const s = (stat[t.group ?? ''] ??= { issued: 0, in: 0 });
+    s.issued++;
+    if (t.used) s.in++;
+    if (t.row) bySeat.set(seatKey(t.row, t.seat), { code: d.id, t });
+  });
+  const nowIn = new Set(), fresh = [];
+  let seatedIn = 0;
+  $('hallSvg').querySelectorAll('.seat:not(.tech)').forEach((c) => {
+    const k = c.dataset.k, info = bySeat.get(k), isIn = !!info?.t.used;
+    c.classList.toggle('issued', !!info);
+    c.classList.toggle('in', isIn);
+    c.classList.toggle('sel', k === selSeat);
+    if (isIn) {
+      nowIn.add(k); seatedIn++;
+      if (prevIn && !prevIn.has(k)) fresh.push(c);
+    }
+  });
+  // анимируем только свежие сканы, а не первую загрузку базы
+  if (fresh.length <= 10) fresh.forEach((c) => { c.classList.remove('pop'); c.getBBox(); c.classList.add('pop'); });
+  prevIn = nowIn;
+  $('hallIn').textContent = seatedIn;
+  $('hallIssued').textContent = bySeat.size;
+  $('hallPct').textContent = `${Math.round((seatedIn / SEATS_TOTAL) * 100)}%`;
+
+  // подсказка по выбранному креслу
+  if (selSeat) {
+    const [r, s] = selSeat.split('-').map(Number), info = bySeat.get(selSeat), g = GROUPS[groupOf(r, s)];
+    let st = 'билет не выпущен';
+    if (info) st = info.t.used ? `в зале с ${info.t.usedAt ? fmtTime(info.t.usedAt.toDate()) : '…'} · ${info.t.usedBy}` : `ждём · ${fmtCode(info.code)}`;
+    $('hallInfo').textContent = `Ряд ${r} · Место ${s} · ${g?.name ?? ''} — ${st}`;
+  }
+
+  // легенда по группам
+  const cap = {};
+  Object.values(HALL).flat().forEach(([, , g]) => (cap[g] = (cap[g] ?? 0) + 1));
+  const keys = [...Object.keys(GROUPS), ''].filter((k) => k || stat['']);
+  $('hallLegend').replaceChildren(...keys.map((k) => {
+    const s = stat[k] ?? { issued: 0, in: 0 }, g = GROUPS[k];
+    const li = document.createElement('li');
+    li.style.setProperty('--c', g?.a1 ?? '#d6b7a3');
+    li.style.setProperty('--fill', s.issued ? Math.round((s.in / s.issued) * 100) : 0);
+    const note = cap[k] ? `мест по схеме: ${cap[k]}` : 'без мест';
+    li.innerHTML = `<span class="dot"></span><span>${g?.name ?? 'Без группы'} <span class="ns">· ${note}</span></span><span><b>${s.in}</b> / ${s.issued}</span><span class="bar"><i></i></span>`;
+    return li;
+  }));
+}
 
 async function resetOne(code) {
   if (!confirm(`Сбросить проход билета ${fmtCode(code)}?`)) return;
@@ -343,9 +513,10 @@ function fmtTime(d) {
 }
 
 /* ---------- QR-билет (картинка) ---------- */
-async function openQr(code, vip) {
+async function openQr(code, t) {
+  const { vip, group, row, seat } = t;
   const cv = $('qrCanvas');
-  await drawTicket(cv, { code, vip, title: EVENT_TITLE, pretty: fmtCode(code) });
+  await drawTicket(cv, { code, vip, group, row, seat, pretty: fmtCode(code) });
 
   const url = cv.toDataURL('image/png');
   const name = `${vip ? 'VIP' : 'bilet'}-${code}.png`;

@@ -23,6 +23,14 @@
   <symbol id="i-list" viewBox="0 0 24 24"><path d="M9 6h11M9 12h11M9 18h11M4.5 6h.01M4.5 12h.01M4.5 18h.01" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"/></symbol>
 </svg>
 
+<div class="embers" aria-hidden="true">
+  <i style="--x:6%;--d:0s;--t:9s;--dx:30px"></i><i style="--x:17%;--d:3s;--t:11s;--dx:-20px"></i>
+  <i style="--x:28%;--d:6s;--t:8s;--dx:15px"></i><i style="--x:39%;--d:1.5s;--t:12s;--dx:-35px"></i>
+  <i style="--x:51%;--d:4.5s;--t:10s;--dx:25px"></i><i style="--x:62%;--d:7s;--t:9s;--dx:-15px"></i>
+  <i style="--x:73%;--d:2s;--t:11s;--dx:30px"></i><i style="--x:84%;--d:5s;--t:8.5s;--dx:-25px"></i>
+  <i style="--x:93%;--d:8s;--t:10s;--dx:10px"></i><i style="--x:45%;--d:9s;--t:13s;--dx:-10px"></i>
+</div>
+
 <header class="top">
   <div class="brand">
     <svg class="flame" aria-hidden="true"><use href="#i-flame"/></svg>
@@ -34,7 +42,17 @@
 <!-- Вход -->
 <main id="loginView" class="view login">
   <div class="hero">
-    <svg class="flame big" aria-hidden="true"><use href="#i-flame"/></svg>
+    <svg class="emblem" viewBox="0 0 200 200" aria-hidden="true">
+      <defs>
+        <path id="emRing" d="M100,100 m-77,0 a77,77 0 1,1 154,0 a77,77 0 1,1 -154,0"/>
+        <linearGradient id="emFl" x1="0" y1="1" x2="0" y2="0"><stop offset="0" stop-color="#ff5a1f"/><stop offset="1" stop-color="#ffe29a"/></linearGradient>
+      </defs>
+      <circle cx="100" cy="100" r="92" fill="#1a0904" stroke="#ff5a1f" stroke-width="4"/>
+      <circle cx="100" cy="100" r="62" fill="none" stroke="#ffb21a" stroke-width="1.5"/>
+      <g class="em-spin"><text class="em-txt"><textPath href="#emRing" textLength="478" lengthAdjust="spacing">КВН · РЕШАЮЩЕЕ НАПРАВЛЕНИЕ ·</textPath></text></g>
+      <path d="M68 138C68 96.6 92.3 81 100 46C106.4 84.6 132 92 132 138Z" fill="url(#emFl)"/>
+      <path d="M88 138C88 119.1 98.6 112 102 96C104.8 113.6 116 117 116 138Z" fill="#fff3c4" opacity=".9"/>
+    </svg>
     <h1>На входе — <span>жара</span></h1>
     <p>Войди как администратор, чтобы сканировать билеты</p>
   </div>
@@ -52,12 +70,13 @@
 <main id="appView" class="view" hidden>
   <section id="tab-scan" class="tab">
     <div class="stats" aria-live="polite">
-      <div><b id="stIn">0</b><small>прошли</small></div>
-      <div class="bar" aria-hidden="true"><i id="stBar"></i></div>
-      <div><b id="stTotal">0</b><small>билетов</small></div>
+      <div class="ring" id="stRing"><b id="stIn">0</b><small>из <span id="stTotal">0</span></small></div>
+      <div class="stat"><b id="stLeft">0</b><small>ещё ждём</small></div>
+      <div class="stat hot"><b id="stPct">0%</b><small>зал заполнен</small></div>
     </div>
-    <div class="reader-wrap">
+    <div class="reader-wrap" id="readerWrap">
       <div id="reader"></div>
+      <div class="scan-frame" aria-hidden="true"><i></i><i></i><i></i><i></i><b class="laser"></b></div>
       <div id="camIdle" class="cam-idle">
         <svg aria-hidden="true"><use href="#i-scan"/></svg>
         <button id="camBtn" class="primary">Включить камеру</button>
@@ -93,7 +112,10 @@
 
 <!-- Результат скана на весь экран -->
 <div id="result" class="result" hidden role="alertdialog" aria-live="assertive" tabindex="-1">
-  <svg class="r-icon" aria-hidden="true"><use id="rIcon" href="#i-ok"/></svg>
+  <div class="r-badge" aria-hidden="true">
+    <span class="burst"></span><span class="burst b2"></span>
+    <svg class="r-icon"><use id="rIcon" href="#i-ok"/></svg>
+  </div>
   <h2 id="rTitle"></h2>
   <p id="rCode" class="r-code"></p>
   <p id="rInfo"></p>

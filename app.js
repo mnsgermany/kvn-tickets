@@ -6,6 +6,7 @@ import {
 } from 'https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore.js';
 import { firebaseConfig, EVENT_TITLE, LOGIN_DOMAIN } from './config.js';
 import { newCode, decide, cleanCode, fmtCode } from './logic.js';
+import { drawTicket } from './ticket.js';
 
 const $ = (id) => document.getElementById(id);
 $('eventTitle').textContent = EVENT_TITLE;
@@ -208,6 +209,7 @@ async function startCamera() {
     );
     running = true;
     $('camIdle').hidden = true;
+    $('readerWrap').classList.add('live');
   } catch (err) {
     console.error(err);
     $('camIdle').hidden = false;
@@ -219,6 +221,7 @@ async function stopCamera() {
   running = false;
   try { await scanner.stop(); } catch { /* уже остановлена */ }
   $('camIdle').hidden = false;
+  $('readerWrap').classList.remove('live');
 }
 function pauseCamera() { try { if (running) scanner.pause(true); } catch { /* не на паузе */ } }
 function resumeCamera() { try { if (running) scanner.resume(); } catch { /* не на паузе */ } }
@@ -243,6 +246,7 @@ function renderTickets(snap) {
     const t = d.data();
     if (t.vip) hasVip = true; else { total++; if (t.used) used++; }
     const li = document.createElement('li');
+    li.className = t.vip ? 'vip' : t.used ? 'done' : '';
     const code = document.createElement('span');
     code.className = 'code';
     code.textContent = fmtCode(d.id);
@@ -260,9 +264,12 @@ function renderTickets(snap) {
   });
   if (!snap.size) list.innerHTML = '<li class="empty">Билетов пока нет — выпусти первый</li>';
   $('vipBtn').hidden = hasVip;
+  const pct = total ? Math.round((used / total) * 100) : 0;
   $('stIn').textContent = used;
   $('stTotal').textContent = total;
-  $('stBar').style.width = total ? `${(used / total) * 100}%` : '0';
+  $('stLeft').textContent = total - used;
+  $('stPct').textContent = `${pct}%`;
+  $('stRing').style.setProperty('--p', pct);
 }
 function button(text, cls, onClick) {
   const b = document.createElement('button');
@@ -337,39 +344,8 @@ function fmtTime(d) {
 
 /* ---------- QR-билет (картинка) ---------- */
 async function openQr(code, vip) {
-  const cv = $('qrCanvas'), c = cv.getContext('2d'), W = cv.width, H = cv.height;
-  await document.fonts.load('40px "Russo One"').catch(() => {});
-  const bg = c.createLinearGradient(0, 0, 0, H);
-  bg.addColorStop(0, '#2a120a');
-  bg.addColorStop(1, vip ? '#7a4a00' : '#7a1e08');
-  c.fillStyle = bg;
-  c.fillRect(0, 0, W, H);
-  c.textAlign = 'center';
-  c.fillStyle = '#fff4ea';
-  c.font = '24px Inter, sans-serif';
-  c.fillText(vip ? 'КВН · VIP · проход всегда' : 'КВН · входной билет', W / 2, 52);
-  c.fillStyle = vip ? '#ffd166' : '#ff5a1f';
-  c.font = '42px "Russo One", sans-serif';
-  c.fillText(EVENT_TITLE, W / 2, 112, W - 40);
-
-  const qr = qrcode(0, 'M');
-  qr.addData(code);
-  qr.make();
-  const n = qr.getModuleCount(), box = 420, x0 = (W - box) / 2, y0 = 160, cell = (box - 40) / n;
-  c.fillStyle = '#fff';
-  c.beginPath();
-  c.roundRect ? c.roundRect(x0, y0, box, box, 24) : c.rect(x0, y0, box, box); // iOS < 16 без roundRect
-  c.fill();
-  c.fillStyle = '#140906';
-  for (let r = 0; r < n; r++) for (let k = 0; k < n; k++) {
-    if (qr.isDark(r, k)) c.fillRect(x0 + 20 + k * cell, y0 + 20 + r * cell, Math.ceil(cell), Math.ceil(cell));
-  }
-  c.fillStyle = '#fff4ea';
-  c.font = '500 40px ui-monospace, Menlo, monospace';
-  c.fillText(fmtCode(code), W / 2, 650);
-  c.fillStyle = '#d6b7a3';
-  c.font = '22px Inter, sans-serif';
-  c.fillText('Покажи QR на входе', W / 2, 700);
+  const cv = $('qrCanvas');
+  await drawTicket(cv, { code, vip, title: EVENT_TITLE, pretty: fmtCode(code) });
 
   const url = cv.toDataURL('image/png');
   const name = `${vip ? 'VIP' : 'bilet'}-${code}.png`;
